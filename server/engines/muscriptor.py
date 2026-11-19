@@ -1,11 +1,12 @@
-﻿import os
+import os
 import shutil
 import subprocess
 import sys
 from .base import TranscriptionEngine
 from ..config import CFG
 
-# muscriptor CLI 璁よ瘑鐨勫叏閮ㄤ箰鍣ㄧ粍鍚嶏紙鏉ヨ嚜 muscriptor list-instruments 瀹炴祴杈撳嚭锛?
+# All instrument group names recognized by the muscriptor CLI
+# (from `muscriptor list-instruments` output)
 _MUSCRIPTOR_INSTRUMENTS = {
     "acoustic_piano", "electric_piano", "chromatic_percussion", "organ",
     "acoustic_guitar", "clean_electric_guitar", "distorted_electric_guitar",
@@ -16,7 +17,8 @@ _MUSCRIPTOR_INSTRUMENTS = {
     "bassoon", "clarinet", "flutes", "synth_lead", "synth_pad", "drums",
 }
 
-# 缃戦〉鐣岄潰鐨勪箰鍣ㄥ悕 -> CLI 涔愬櫒缁勫悕锛堜竴涓晫闈㈤€夐」鍙睍寮€涓哄涓?CLI 缁勶級
+# Web UI instrument names -> CLI group names (one UI option may expand
+# to several CLI groups)
 _INSTRUMENT_MAP = {
     "piano": ["acoustic_piano", "electric_piano"],
     "bass": ["acoustic_bass", "electric_bass"],
@@ -37,17 +39,21 @@ _INSTRUMENT_MAP = {
     "vocals": ["voice"],
 }
 
-
 class MuscriptorEngine(TranscriptionEngine):
-    """閫氳繃瀹樻柟 CLI 璋冪敤 MuScriptor(subprocess 妯″紡)銆?
-    浼樼偣: 涓嶄緷璧栧唴閮?Python API, 杩涚▼骞插噣閫€鍑烘棤鏄惧瓨娉勬紡;
-    浠ｄ环: 姣忔鍐峰姞杞芥ā鍨?~10-20s)銆傚悗缁彲鏀?inproc 甯搁┗銆?""
+    """Call MuScriptor through its official CLI (subprocess mode).
+
+    Pros: no dependency on the internal Python API; the process exits
+    cleanly with no lingering memory leaks.
+    Cost: a cold model load on every run (~10-20s). Could later be
+    switched to an in-process resident engine.
+    """
 
     def __init__(self):
         c = CFG.get("muscriptor", {})
         self.model = c.get("model", "large")
-        # 鍏煎鏃ч厤缃敭 torch_backend(閭ｆ槸 uv 鐨勫畨瑁呭弬鏁? 涓嶆槸 muscriptor 鐨?:
-        # 缁熶竴鏄犲皠鍒?CLI 鐪熷疄瀛樺湪鐨?--device(auto/cpu/cuda/cuda:0/mps)
+        # Compat with the old config key torch_backend (that was a uv
+        # install parameter, not a muscriptor option): map it to the
+        # CLI's real --device option (auto/cpu/cuda/cuda:0/mps).
         self.device = c.get("device") or c.get("torch_backend") or ""
         self.timeout = c.get("timeout", 1800)
 
@@ -64,8 +70,11 @@ class MuscriptorEngine(TranscriptionEngine):
         return self._cli_prefix() is not None
 
     def _translate_instruments(self, instruments: list[str] | None) -> str | None:
-        """鐣岄潰涔愬櫒鍚?-> CLI 缁勫悕銆傝璇嗙殑缈昏瘧, 鏈潵灏辨槸 CLI 鍘熺敓鍚嶇殑鐩存帴鐢?
-        璋侀兘涓嶈璇嗙殑涓㈠純(鍚﹀垯鏁翠釜 --instruments 鍙傛暟浼氳 CLI 鎷掓敹)銆?""
+        """Translate UI instrument names to CLI group names.
+
+        Unknown names are dropped, otherwise the whole --instruments
+        argument would be rejected by the CLI.
+        """
         if not instruments:
             return None
         out: list[str] = []
@@ -75,40 +84,42 @@ class MuscriptorEngine(TranscriptionEngine):
                 out += _INSTRUMENT_MAP[key]
             elif key in _MUSCRIPTOR_INSTRUMENTS:
                 out.append(key)
-        out = list(dict.fromkeys(out))  # 鍘婚噸涓斾繚鎸侀『搴?
+        out = list(dict.fromkeys(out))  # dedupe, keep order
         return ",".join(out) if out else None
 
     def _build_cmd(self, audio: str, out: str,
                    instruments: list[str] | None, bpm: int | None) -> list[str]:
         cmd = list(self._cli_prefix())
-        # 鈽?淇1: 琛ヤ笂瀹樻柟瑕佹眰鐨?transcribe 瀛愬懡浠?涔嬪墠闊抽璺緞琚綋鎴愪簡瀛愬懡浠?
+        # Fix 1: add the required `transcribe` subcommand (previously the
+        # audio path was treated as the subcommand) + skip beat detection
+        # (--detect-tempo false; parameter verified against --help).
         cmd += ["transcribe", audio, "-o", out, "--model", str(self.model), "--detect-tempo", "false"]
-        # 鈽?淇2: --torch-backend 鍦?CLI 閲屼笉瀛樺湪, 鏀圭敤鐪熷疄閫夐」 --device
+        # Fix 2: --torch-backend does not exist in the CLI; use the real
+        # option --device instead.
         if self.device:
             cmd += ["--device", self.device]
-        # 鈽?淇3: 涔愬櫒鍚嶅厛缈昏瘧鎴?CLI 璁よ瘑鐨勭粍鍚嶅啀浼?
+        # Fix 3: translate instrument names to CLI-recognized groups first.
         inst = self._translate_instruments(instruments)
         if inst:
             cmd += ["--instruments", inst]
         if bpm:
-            cmd += ["--bpm", str(int(bpm))]  # CLI 闄愬畾 20-400
-        # 鍙傛暟鍚嶅凡閫愪竴瀵圭収 `muscriptor transcribe --help` 鏍稿
+            cmd += ["--bpm", str(int(bpm))]  # CLI limits 20-400
+        # Parameter names cross-checked against `muscriptor transcribe --help`
         return cmd
 
     def transcribe(self, audio_path, out_mid_path, instruments=None, bpm=None):
         cmd = self._build_cmd(audio_path, out_mid_path, instruments, bpm)
-        env = os.environ.copy()  # 缁ф壙 HF_TOKEN 绛?
+        env = os.environ.copy()  # inherit HF_TOKEN etc.
         try:
             r = subprocess.run(cmd, capture_output=True, text=True,
                                timeout=self.timeout, env=env,
                                encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"MuScriptor 瓒呮椂({self.timeout}s)")
+            raise RuntimeError(f"MuScriptor timeout ({self.timeout}s)")
         if r.returncode != 0:
             raise RuntimeError(
-                f"MuScriptor 澶辫触(鐮?{r.returncode}):\n"
+                f"MuScriptor failed (code {r.returncode}):\n"
                 f"{(r.stderr or r.stdout)[-2000:]}")
         if not os.path.exists(out_mid_path):
-            raise RuntimeError("MuScriptor 鏈骇鍑?MIDI 鏂囦欢")
+            raise RuntimeError("MuScriptor produced no MIDI file")
         return out_mid_path
-
