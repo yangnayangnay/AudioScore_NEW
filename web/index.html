@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>midi-bridge · 音频转 MIDI</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --txt:#e8eaf0;
+          --dim:#8b93a3; --acc:#5b8cff; --ok:#3ecf8e; --err:#ff6b6b; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--txt); font-family:system-ui,
+         "PingFang SC","Microsoft YaHei",sans-serif; min-height:100vh; }
+  .wrap { max-width:720px; margin:0 auto; padding:24px 16px 60px; }
+  h1 { font-size:22px; margin-bottom:4px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:24px; }
+  .card { background:var(--card); border:1px solid var(--line);
+          border-radius:12px; padding:20px; margin-bottom:16px; }
+  #drop { border:2px dashed var(--line); border-radius:10px; padding:36px 16px;
+          text-align:center; cursor:pointer; transition:.2s; }
+  #drop.on { border-color:var(--acc); background:#1c2230; }
+  #drop .big { font-size:15px; margin-bottom:6px; }
+  #drop .small { color:var(--dim); font-size:12px; }
+  label { display:block; font-size:13px; color:var(--dim); margin:14px 0 6px; }
+  select,input[type=number] { width:100%; background:#11141a; color:var(--txt);
+    border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:14px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { border:1px solid var(--line); border-radius:999px; padding:5px 13px;
+          font-size:12px; cursor:pointer; user-select:none; color:var(--dim); }
+  .chip.on { border-color:var(--acc); color:var(--acc); background:#1c2536; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .row>div { flex:1; min-width:150px; }
+  .opt { display:flex; align-items:center; gap:8px; font-size:13px;
+         color:var(--txt); margin-top:10px; }
+  button.go { width:100%; margin-top:20px; padding:13px; font-size:15px;
+    border:none; border-radius:10px; background:var(--acc); color:#fff;
+    font-weight:600; cursor:pointer; }
+  button.go:disabled { opacity:.45; cursor:not-allowed; }
+  #status { display:none; }
+  .stage { font-size:14px; margin-bottom:8px; }
+  .bar { height:6px; background:#11141a; border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--acc); width:0%;
+           transition:width .5s; border-radius:3px; }
+  .meta { color:var(--dim); font-size:12px; margin-top:8px; }
+  .err { color:var(--err); font-size:13px; white-space:pre-wrap;
+         max-height:200px; overflow:auto; margin-top:8px; }
+  a.dl { display:block; text-align:center; margin-top:16px; padding:13px;
+    border-radius:10px; background:var(--ok); color:#06281a; font-weight:700;
+    text-decoration:none; font-size:15px; }
+  .hist { font-size:12px; color:var(--dim); margin-top:12px; line-height:1.9; }
+  .hist a { color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>midi-bridge</h1>
+  <div class="sub">本地 AI 音频转 MIDI · MuScriptor / Basic Pitch · RTX 4070</div>
+
+  <div class="card">
+    <div id="drop">
+      <div class="big" id="fname">点击选择或拖入音频文件</div>
+      <div class="small" id="fmeta">支持 mp3 / wav / flac / ogg，≤200MB</div>
+    </div>
+    <input type="file" id="file" accept="audio/*" hidden>
+  </div>
+
+  <div class="card">
+    <label>转写后端</label>
+    <select id="backend"></select>
+    <label>乐器约束（全不选 = 自动检测所有乐器；选中可抑制乐器识别漂移）</label>
+    <div class="chips" id="chips"></div>
+    <div class="row">
+      <div>
+        <label>BPM（留空 = 自动检测）</label>
+        <input type="number" id="bpm" placeholder="auto" min="30" max="300">
+      </div>
+    </div>
+    <div class="opt"><input type="checkbox" id="pp1" checked>重叠分片去重（跨 5s 分片重复音符合并）</div>
+    <div class="opt"><input type="checkbox" id="pp2" checked>碎音符过滤（&lt;60ms）</div>
+    <div class="opt"><input type="checkbox" id="pp3">力度重建（基于原始音频能量）</div>
+    <button class="go" id="go" disabled>开始转写</button>
+  </div>
+
+  <div class="card" id="status">
+    <div class="stage" id="stage">排队中…</div>
+    <div class="bar"><i id="pbar"></i></div>
+    <div class="meta" id="smeta"></div>
+    <div class="err" id="serr"></div>
+    <a class="dl" id="dl" style="display:none" download>⬇ 下载 MIDI 文件</a>
+    <div class="hist" id="hist"></div>
+  </div>
+</div>
+
+<script>
+let file = null, poller = null, history = [];
+const $ = id => document.getElementById(id);
+
+// 初始化后端与乐器
+fetch('/api/backends').then(r => r.json()).then(d => {
+  const sel = $('backend');
+  d.backends.forEach(b => {
+    const o = document.createElement('option');
+    o.value = b.name;
+    o.textContent = (b.available ? '' : '【未安装】') +
+      (b.name === 'muscriptor' ? 'MuScriptor（多乐器·推荐）' : 'Basic Pitch（单轨·轻量）');
+    o.disabled = !b.available;
+    sel.appendChild(o);
+  });
+  const chips = $('chips');
+  d.instruments.forEach(name => {
+    const c = document.createElement('span');
+    c.className = 'chip'; c.textContent = name;
+    c.onclick = () => c.classList.toggle('on');
+    chips.appendChild(c);
+  });
+});
+
+// 上传交互
+const drop = $('drop'), fi = $('file');
+drop.onclick = () => fi.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('on'); };
+drop.ondragleave = () => drop.classList.remove('on');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('on'); pick(e.dataTransfer.files[0]); };
+fi.onchange = () => pick(fi.files[0]);
+function pick(f) {
+  if (!f) return;
+  file = f;
+  $('fname').textContent = f.name;
+  $('fmeta').textContent = (f.size / 1048576).toFixed(1) + ' MB';
+  $('go').disabled = false;
+}
+
+// 提交
+$('go').onclick = async () => {
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('backend', $('backend').value);
+  fd.append('instruments', [...document.querySelectorAll('.chip.on')]
+            .map(c => c.textContent).join(','));
+  const bpm = $('bpm').value.trim();
+  if (bpm) fd.append('bpm', bpm);
+  // 后处理开关同步到说明: 服务端读 config.yaml; 这里至少写进缓存 key 的提示由后端处理
+  const r = await fetch('/api/jobs', { method: 'POST', body: fd });
+  const d = await r.json();
+  if (!r.ok) { alert(d.detail || '提交失败'); return; }
+  $('status').style.display = 'block';
+  $('dl').style.display = 'none'; $('serr').textContent = '';
+  poll(d.job_id);
+};
+
+function poll(id) {
+  clearInterval(poller);
+  poller = setInterval(async () => {
+    const j = await (await fetch('/api/jobs/' + id)).json();
+    $('stage').textContent = '【' + j.backend + '】' + j.stage + (j.cached ? '（缓存命中）' : '');
+    $('pbar').style.width =
+      ({ queued: 5, running: 40, done: 100, error: 100 })[j.status] + '%';
+    $('smeta').textContent = '已用时 ' + j.elapsed + 's';
+    if (j.status === 'done') {
+      clearInterval(poller);
+      if (j.stats) $('smeta').textContent +=
+        ` · ${j.stats.notes} 音符 · ${j.stats.tracks} 轨 · ${j.stats.duration}s`;
+      const a = $('dl'); a.href = j.result_url;
+      a.style.display = 'block';
+      a.textContent = `⬇ 下载 MIDI（${j.stats.notes} 音符）`;
+      history.unshift(`<a href="${j.result_url}">${id}</a> · ${j.stats.notes}音符 · ${j.elapsed}s`);
+      $('hist').innerHTML = '本次会话: ' + history.slice(0, 5).join('｜');
+    } else if (j.status === 'error') {
+      clearInterval(poller);
+      $('serr').textContent = j.error || '未知错误';
+    }
+  }, 2000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,264 @@
+                                                                               
+ Usage: muscriptor transcribe [OPTIONS] {audio_file}                           
+                                                                               
+ Transcribe an audio file to MIDI.                                             
+                                                                               
++- Arguments -----------------------------------------------------------------+
+| *    audio_file      <path>  Input audio file (wav, mp3, flac, ¡­)           |
+|                              [required]                                     |
++-----------------------------------------------------------------------------+
++- Options -------------------------------------------------------------------+
+| --output          -o                     <path>            Output file      |
+|                                                            path. Use '-' to |
+|                                                            write to stdout  |
+|                                                            (all progress /  |
+|                                                            timing info is   |
+|                                                            sent to stderr   |
+|                                                            in that case).   |
+|                                                            Default:         |
+|                                                            <audio_file>.<e¡­ |
+|                                                            where ext        |
+|                                                            matches          |
+|                                                            --format. With   |
+|                                                            --format sheets  |
+|                                                            this is a        |
+|                                                            directory        |
+|                                                            instead: it must |
+|                                                            be empty or not  |
+|                                                            exist yet, and   |
+|                                                            is created if    |
+|                                                            missing.         |
+| --format          -f                     <midi|json|jsonl  Output format:   |
+|                                          |sheets>          midi (default),  |
+|                                                            json (single     |
+|                                                            array of         |
+|                                                            events), jsonl   |
+|                                                            (one event per   |
+|                                                            line, streamed   |
+|                                                            as transcription |
+|                                                            progresses), or  |
+|                                                            sheets (a        |
+|                                                            directory of     |
+|                                                            engraved PDFs    |
+|                                                            plus MusicXML    |
+|                                                            and MIDI;        |
+|                                                            requires         |
+|                                                            MuseScore to be  |
+|                                                            installed)       |
+|                                                            [default: midi]  |
+| --notes                                  <bool>            Print decoded    |
+|                                                            events to stdout |
+| --sampling                               <bool>            Use temperature  |
+|                                                            sampling instead |
+|                                                            of greedy        |
+|                                                            decoding         |
+| --temperature     -t                     <float>           Sampling         |
+|                                                            temperature      |
+|                                                            (only with       |
+|                                                            --sampling)      |
+|                                                            [default: 1.0]   |
+| --cfg-coef                               <float>           Classifier-free  |
+|                                                            guidance         |
+|                                                            coefficient      |
+|                                                            [default: 1.0]   |
+| --model           -m                     <str>             Model size       |
+|                                                            ('small',        |
+|                                                            'medium',        |
+|                                                            'large';         |
+|                                                            default:         |
+|                                                            medium), a local |
+|                                                            safetensors      |
+|                                                            path, or an      |
+|                                                            hf:// /          |
+|                                                            http(s):// URL   |
+| --device          -d                     <str>             Device: 'auto',  |
+|                                                            'cpu', 'cuda',   |
+|                                                            'cuda:0', 'mps', |
+|                                                            ¡­                |
+|                                                            [default: auto]  |
+| --dtype                                  <str>             Transformer      |
+|                                                            dtype:           |
+|                                                            'float32',       |
+|                                                            'float16' or     |
+|                                                            'bfloat16'.      |
+|                                                            Default: float16 |
+|                                                            on MPS, float32  |
+|                                                            elsewhere.       |
+| --batch-size      -b                     <int>             Chunks generated |
+|                                                            per forward pass |
+|                                                            (default: 1;     |
+|                                                            with             |
+|                                                            --no-prelude-fo¡­ |
+|                                                            4 on GPU, 1 on   |
+|                                                            CPU). Values > 1 |
+|                                                            lower quality at |
+|                                                            chunk boundaries |
+|                                                            and require      |
+|                                                            --no-prelude-fo¡­ |
+| --strict-eos                             <bool>            Raise an error   |
+|                                                            if a chunk fails |
+|                                                            to emit EOS      |
+|                                                            within the       |
+|                                                            generation       |
+|                                                            budget (default: |
+|                                                            downgrade to a   |
+|                                                            warning)         |
+| --beam-size                              <int>             Beam search      |
+|                                                            width (1 =       |
+|                                                            greedy/sampling, |
+|                                                            ¡Ý2 enables beam  |
+|                                                            search)          |
+|                                                            [default: 1]     |
+| --prelude-forci¡­      --no-prelude-f¡­    <bool>            Teacher-force    |
+|                                                            each chunk's tie |
+|                                                            prologue from    |
+|                                                            the previous     |
+|                                                            chunk's          |
+|                                                            still-sounding   |
+|                                                            notes, so chunks |
+|                                                            can't restart    |
+|                                                            with the wrong   |
+|                                                            instruments.     |
+|                                                            Needs chunks     |
+|                                                            generated in     |
+|                                                            order, so it     |
+|                                                            requires         |
+|                                                            --batch-size 1   |
+|                                                            (the default).   |
+|                                                            [default:        |
+|                                                            prelude-forcing] |
+| --auralize                               <path>            Write a stereo   |
+|                                                            auralization     |
+|                                                            (L=original      |
+|                                                            audio, R=MIDI    |
+|                                                            synthesis) to    |
+|                                                            this path.       |
+|                                                            Requires         |
+|                                                            fluidsynth on    |
+|                                                            PATH. Extension  |
+|                                                            determines       |
+|                                                            format: .wav     |
+|                                                            (default) or     |
+|                                                            .mp3. Only valid |
+|                                                            with --format    |
+|                                                            midi.            |
+| --soundfont                              <path>            Path to a .sf2   |
+|                                                            SoundFont for    |
+|                                                            auralization.    |
+|                                                            Defaults to      |
+|                                                            MuseScore_Gener¡­ |
+|                                                            downloaded once  |
+|                                                            and cached       |
+|                                                            locally.         |
+| --instruments                            <str>             Comma-separated  |
+|                                                            list of expected |
+|                                                            instrument group |
+|                                                            names. When      |
+|                                                            given, every     |
+|                                                            instrument not   |
+|                                                            in the list is   |
+|                                                            forbidden from   |
+|                                                            being decoded at |
+|                                                            all.             |
+|                                                            Case-insensitiv¡­ |
+|                                                            unambiguous      |
+|                                                            abbreviations    |
+|                                                            are accepted     |
+|                                                            (e.g.            |
+|                                                            'timp,cello,dis¡­ |
+|                                                            Run 'muscriptor  |
+|                                                            list-instrument¡­ |
+|                                                            to see all       |
+|                                                            available names. |
+| --detect-tempo                           <true|false|best  Detect the beats |
+|                                          -effort>          and time         |
+|                                                            signature from   |
+|                                                            the audio and    |
+|                                                            write them into  |
+|                                                            the MIDI. 'true' |
+|                                                            fails if no      |
+|                                                            beats are found, |
+|                                                            'best-effort'    |
+|                                                            warns and uses a |
+|                                                            placeholder 120  |
+|                                                            BPM with no time |
+|                                                            signature,       |
+|                                                            'false' skips    |
+|                                                            detection        |
+|                                                            altogether.      |
+|                                                            [default:        |
+|                                                            best-effort]     |
+| --help                                   <bool>            Show this        |
+|                                                            message and      |
+|                                                            exit.            |
++-----------------------------------------------------------------------------+
++- MIDI timing ---------------------------------------------------------------+
+| --bpm                                  <float range>     Write this tempo   |
+|                                        [20<=x<=400]      instead of the     |
+|                                                          detected one.      |
+| --beats-per-bar                        <int range>       Write this many    |
+|                                        [1<=x<=32]        beats per bar      |
+|                                                          (n/4) instead of   |
+|                                                          the detected       |
+|                                                          meter.             |
+| --first-downbeat                       <float>           Time in seconds of |
+|                                                          a bar line in the  |
+|                                                          audio, instead of  |
+|                                                          the detected first |
+|                                                          downbeat.          |
+| --tempo-map           --fixed-tempo    <bool>            Follow the tracked |
+|                                                          beats with a tempo |
+|                                                          map, or write one  |
+|                                                          constant tempo.    |
+|                                                          Default: a tempo   |
+|                                                          map only when the  |
+|                                                          tempo isn't        |
+|                                                          steady.            |
+| --beat-scale                           <float>           Beats per detected |
+|                                                          beat: 2 if the     |
+|                                                          detected tempo is  |
+|                                                          half what it       |
+|                                                          should be, 0.5 if  |
+|                                                          double. A power of |
+|                                                          two.               |
+|                                                          [default: 1.0]     |
+| --quantize            --no-quantize    <bool>            Snap note starts   |
+|                                                          and ends onto the  |
+|                                                          beat grid. Always  |
+|                                                          on for --format    |
+|                                                          sheets.            |
+|                                                          [default:          |
+|                                                          no-quantize]       |
+| --grid                                 <int range>       Steps per beat to  |
+|                                        [1<=x<=32]        quantize to: 4 =   |
+|                                                          sixteenths, 3 =    |
+|                                                          eighth triplets, ¡­ |
+|                                                          Default: the one   |
+|                                                          the notes sit on   |
+|                                                          best.              |
+| --quantize-streng¡­                     <float range>     How far to move    |
+|                                        [0.0<=x<=1.0]     notes onto the     |
+|                                                          grid: 1 all the    |
+|                                                          way, 0.5 halfway.  |
+|                                                          [default: 1.0]     |
+| --fill-gaps                            <float range>     Hold notes on      |
+|                                        [x>=0.0]          until the next     |
+|                                                          note of their      |
+|                                                          instrument when    |
+|                                                          the silence in     |
+|                                                          between is at most |
+|                                                          this many beats,   |
+|                                                          to avoid spurious  |
+|                                                          rests in notation  |
+|                                                          software. 0        |
+|                                                          disables.          |
+|                                                          [default: 0.0]     |
+| --trim-leading-ba¡­                     <bool>            Drop the empty     |
+|                                                          bars before the    |
+|                                                          first note. The    |
+|                                                          MIDI then no       |
+|                                                          longer lines up    |
+|                                                          with the start of  |
+|                                                          the audio.         |
++-----------------------------------------------------------------------------+
+
