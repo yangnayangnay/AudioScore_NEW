@@ -1,92 +1,200 @@
 import asyncio
+import inspect
 import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from . import cache, midi_io, postprocess
+from .config import CFG, TMP_DIR, OUTPUT_DIR
 from .engines import get_engine
-from .config import CFG, TMP_DIR, OUT_DIR
 
-# 单 GPU → 推理必须串行
 _gpu_lock = asyncio.Lock()
 _executor = ThreadPoolExecutor(max_workers=1)
-_jobs: dict[str, dict] = {}
+_jobs = {}
+_queue = []
+_worker_task = None
 
-
-def create_job(audio_path: str, audio_hash: str, backend: str,
-               instruments: list[str] | None, bpm: int | None) -> str:
+def create_job(audio_path, audio_hash, backend, instruments, bpm,
+               post_cfg=None, force_gpu=None, orig_name=None,
+               auto_inst=False, engine_timeout=None, separate=0):
     job_id = uuid.uuid4().hex[:12]
     _jobs[job_id] = {
-        "id": job_id, "status": "queued", "stage": "排队中",
+        "id": job_id, "status": "queued", "stage": "queued",
         "backend": backend, "created": time.time(), "elapsed": 0.0,
         "audio_path": audio_path, "audio_hash": audio_hash,
         "instruments": instruments, "bpm": bpm,
+        "post_cfg": post_cfg, "force_gpu": force_gpu,
+        "orig_name": orig_name, "auto_inst": auto_inst,
+        "engine_timeout": engine_timeout, "separate": separate,
+        "detected": None, "detected_by": None,
         "error": None, "stats": None, "result_file": None, "cached": False,
     }
     return job_id
 
-
-def get_job(job_id: str) -> dict | None:
+def get_job(job_id):
     j = _jobs.get(job_id)
-    if not j:
-        return None
-    if j["status"] in ("done", "error"):
-        j["elapsed"] = round(j.get("_elapsed_final", 0.0), 1)
+    if not j: return None
+    if j["status"] in ("done","error"):
+        j["elapsed"] = round(j.get("_elapsed_final",0.0),1)
     else:
-        j["elapsed"] = round(time.time() - j["created"], 1)
+        j["elapsed"] = round(time.time()-j["created"],1)
     return j
 
+def list_jobs():
+    out=[]
+    for jid in list(_jobs.keys()):
+        j=_jobs.get(jid)
+        if j: out.append({"id":jid,"status":j["status"],"stage":j["stage"],
+                          "elapsed":j["elapsed"],"cached":j["cached"]})
+    return out
 
-def _run_sync(job: dict, post_cfg: dict):
-    """在 executor 线程里跑(阻塞式推理)"""
+def enqueue(job_id):
+    global _worker_task
+    _queue.append(job_id)
+    if _worker_task is None or _worker_task.done():
+        _worker_task = asyncio.create_task(_worker())
+
+async def _worker():
+    while _queue:
+        jid = _queue.pop(0)
+        try:
+            await execute(jid)
+        except Exception as e:
+            j=_jobs.get(jid)
+            if j: j.update(status="error",stage="failed",error=str(e)[:1000])
+
+def _cache_key(job, tier):
+    backend_key = job["backend"] + (("@sep%d" % tier) if tier > 0 else "")
+    return cache.make_key(job["audio_hash"], backend_key,
+                          job["instruments"], job["bpm"],
+                          job.get("post_cfg") or {})
+
+def _finish(job, notes, dur, key, extra=None):
     jid = job["id"]
+    out = os.path.join(OUTPUT_DIR, jid + ".mid")
+    midi_io.notes_to_midi(notes, bpm=job["bpm"] or 120, path=out)
+    cache.cache_put(key, out)
+    stats = {"notes":len(notes),"duration":round(dur,1),
+             "tracks":len({(n.program,n.is_drum) for n in notes})}
+    if extra: stats.update(extra)
+    job.update(status="done", stage="done", result_file=out,
+               _elapsed_final=time.time()-job["created"], stats=stats)
 
-    # 1. 缓存命中 → 秒回
-    key = cache.make_key(job["audio_hash"], job["backend"],
-                         job["instruments"], job["bpm"], post_cfg)
+def _engine_kwargs(job, eng):
+    kwargs = {}
+    try:
+        sig = inspect.signature(eng.transcribe).parameters
+        if "force_gpu" in sig: kwargs["force_gpu"] = job.get("force_gpu")
+        if "timeout"   in sig: kwargs["timeout"]   = job.get("engine_timeout")
+    except (TypeError, ValueError):
+        pass
+    return kwargs
+
+def _run_stems(job, eng, kwargs, tier, post_cfg):
+    from . import stem_sep
+    jid = job["id"]
+    job.update(stage="separating")
+    stem_sep.separate(job["audio_path"], job["audio_hash"],
+                      timeout=job.get("engine_timeout"))
+    spec = stem_sep.TIER_STEMS[tier]
+    names = list(spec.keys())
+    total = len(names)
+    all_notes = []
+    dur = 0.0
+    for i, sname in enumerate(names, 1):
+        job.update(stage="stem %d/%d (%s)" % (i, total, sname))
+        stem_wav = stem_sep.mix_stems(job["audio_hash"], tier, sname)
+        raw_mid = os.path.join(TMP_DIR, "%s_%s_raw.mid" % (jid, sname))
+        try:
+            eng.transcribe(stem_wav, raw_mid, instruments=None,
+                           bpm=job["bpm"], **kwargs)
+            notes, d = midi_io.midi_to_notes(raw_mid)
+            dur = max(dur, d)
+        finally:
+            if os.path.exists(raw_mid):
+                try: os.remove(raw_mid)
+                except OSError: pass
+        if sname == "drums":
+            for n in notes: n.is_drum = True
+        elif sname == "bass":
+            for n in notes: n.is_drum = False; n.program = 33
+        elif sname == "vocals":
+            for n in notes: n.is_drum = False; n.program = 52
+        all_notes.extend(notes)
+    job.update(stage="postprocess")
+    if post_cfg.get("enabled", True):
+        all_notes = postprocess.run_pipeline(all_notes, job["audio_path"], post_cfg)
+    _finish(job, all_notes, dur, _cache_key(job, tier),
+            extra={"stems": total})
+
+def _run_sync(job):
+    jid = job["id"]
+    post_cfg = job.get("post_cfg") or CFG.get("postprocess",{}) or {}
+    force_gpu = job.get("force_gpu")
+    try:
+        tier = int(job.get("separate") or 0)
+    except (TypeError, ValueError):
+        tier = 0
+    if tier not in (0,1,2,3): tier = 0
+
+    if job.get("auto_inst") and not job["instruments"]:
+        job.update(stage="instrument detect")
+        try:
+            from . import instr_detect
+            _w = (CFG.get("instrument_detect", {}) or {}).get("window_seconds", 60)
+            d = instr_detect.detect_instruments(job["audio_path"], job["audio_hash"],
+                                                window_seconds=_w)
+            job["instruments"] = d["instruments"]
+            job["detected"] = d["instruments"] or []
+            job["detected_by"] = d["method"]
+        except Exception:
+            pass
+
+    key = _cache_key(job, tier)
     hit = cache.cache_get(key)
     if hit:
-        out = os.path.join(OUT_DIR, f"{jid}.mid")
+        out = os.path.join(OUTPUT_DIR, jid + ".mid")
         os.replace(hit, out)
         notes, dur = midi_io.midi_to_notes(out)
-        job.update(status="done", stage="缓存命中", cached=True,
-                   result_file=out, _elapsed_final=time.time() - job["created"],
-                   stats={"notes": len(notes), "duration": round(dur, 1),
-                          "tracks": len({(n.program, n.is_drum) for n in notes})})
+        job.update(status="done", stage="done", cached=True,
+                   result_file=out,
+                   _elapsed_final=time.time()-job["created"],
+                   stats={"notes":len(notes),"duration":round(dur,1),
+                          "tracks":len({(n.program,n.is_drum) for n in notes})})
         return
 
-    # 2. 引擎转写 → raw MIDI
-    job.update(status="running", stage="模型推理中")
+    job.update(status="running", stage="model running")
     eng = get_engine(job["backend"])
-    raw_mid = os.path.join(TMP_DIR, f"{jid}_raw.mid")
-    eng.transcribe(job["audio_path"], raw_mid,
-                   instruments=job["instruments"], bpm=job["bpm"])
+    kwargs = _engine_kwargs(job, eng)
 
-    # 3. 统一 Note → 后处理 → 最终 MIDI
-    job.update(stage="后处理中")
+    if tier > 0:
+        _run_stems(job, eng, kwargs, tier, post_cfg)
+        return
+
+    raw_mid = os.path.join(TMP_DIR, jid + "_raw.mid")
+    try:
+        eng.transcribe(job["audio_path"], raw_mid,
+                       instruments=job["instruments"], bpm=job["bpm"], **kwargs)
+    except Exception as e:
+        if os.path.exists(raw_mid):
+            try: os.remove(raw_mid)
+            except OSError: pass
+        raise
+    job.update(stage="postprocess")
     notes, dur = midi_io.midi_to_notes(raw_mid)
-    notes = postprocess.run_pipeline(notes, job["audio_path"], post_cfg)
-    out = os.path.join(OUT_DIR, f"{jid}.mid")
-    bpm = job["bpm"] or 120
-    midi_io.notes_to_midi(notes, bpm=bpm, path=out)
+    if post_cfg.get("enabled", True):
+        notes = postprocess.run_pipeline(notes, job["audio_path"], post_cfg)
+    _finish(job, notes, dur, key)
 
-    cache.cache_put(key, out)
-    job.update(status="done", stage="完成",
-               result_file=out, _elapsed_final=time.time() - job["created"],
-               stats={"notes": len(notes), "duration": round(dur, 1),
-                      "tracks": len({(n.program, n.is_drum) for n in notes})})
-
-
-async def execute(job_id: str):
-    job = _jobs[job_id]
-    post_cfg = CFG.get("postprocess", {})
-    async with _gpu_lock:  # GPU 串行
-        if job["status"] not in ("queued",):  # 已被处理/取消
-            return
+async def execute(job_id):
+    job = _jobs.get(job_id)
+    if not job: return
+    async with _gpu_lock:
+        if job["status"] != "queued": return
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(_executor, _run_sync, job, post_cfg)
+            await loop.run_in_executor(_executor, _run_sync, job)
         except Exception as e:
-            job.update(status="error", stage="失败", error=str(e)[:1000],
-                       _elapsed_final=time.time() - job["created"])
+            job.update(status="error", stage="failed", error=str(e)[:1000],
+                       _elapsed_final=time.time()-job["created"])

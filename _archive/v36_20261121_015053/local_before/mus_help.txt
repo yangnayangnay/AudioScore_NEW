@@ -1,0 +1,16 @@
+                                                                               
+ Usage: muscriptor [OPTIONS] COMMAND [ARGS]...                                 
+                                                                               
+ muscriptor ¡ª audio-to-MIDI transcription                                      
+                                                                               
++- Options -------------------------------------------------------------------+
+| --help        <bool>  Show this message and exit.                           |
++-----------------------------------------------------------------------------+
++- Commands ------------------------------------------------------------------+
+| transcribe        Transcribe an audio file to MIDI.                         |
+| serve             Run the HTTP transcription server (POST /transcribe ¡ú SSE |
+|                   event stream).                                            |
+| list-instruments  List the instrument group names accepted by               |
+|                   --instruments.                                            |
++-----------------------------------------------------------------------------+
+

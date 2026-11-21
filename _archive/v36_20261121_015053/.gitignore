@@ -1,0 +1,15 @@
+.venv/
+models/
+__pycache__/
+*.pyc
+output/
+outputs/
+tmp/
+logs/
+hf_cache/
+*.mid
+*.mp3
+*.wav
+*.flac
+
+logs/

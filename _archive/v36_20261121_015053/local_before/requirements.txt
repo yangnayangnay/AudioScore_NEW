@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pyyaml>=6.0
+pretty_midi>=0.2.10
+numpy>=1.24
+librosa>=0.10
+soundfile>=0.12
+# ---- 后端(按需安装, 至少装一个) ----
+# muscriptor        # pip install muscriptor, 需 HF 认证, CC BY-NC 非商用
+# basic-pitch       # 轻量后端, 用来快速验证链路

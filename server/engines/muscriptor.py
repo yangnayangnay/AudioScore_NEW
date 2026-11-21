@@ -5,121 +5,92 @@ import sys
 from .base import TranscriptionEngine
 from ..config import CFG
 
-# All instrument group names recognized by the muscriptor CLI
-# (from `muscriptor list-instruments` output)
 _MUSCRIPTOR_INSTRUMENTS = {
-    "acoustic_piano", "electric_piano", "chromatic_percussion", "organ",
-    "acoustic_guitar", "clean_electric_guitar", "distorted_electric_guitar",
-    "acoustic_bass", "electric_bass", "violin", "viola", "cello", "contrabass",
-    "orchestral_harp", "timpani", "string_ensemble", "synth_strings", "voice",
-    "orchestra_hit", "trumpet", "trombone", "tuba", "french_horn", "brass_section",
-    "soprano_and_alto_sax", "tenor_sax", "baritone_sax", "oboe", "english_horn",
-    "bassoon", "clarinet", "flutes", "synth_lead", "synth_pad", "drums",
-}
-
-# Web UI instrument names -> CLI group names (one UI option may expand
-# to several CLI groups)
-_INSTRUMENT_MAP = {
-    "piano": ["acoustic_piano", "electric_piano"],
-    "bass": ["acoustic_bass", "electric_bass"],
-    "drums": ["drums"],
-    "guitar": ["acoustic_guitar"],
-    "electric guitar": ["clean_electric_guitar", "distorted_electric_guitar"],
-    "electric_guitar": ["clean_electric_guitar", "distorted_electric_guitar"],
-    "strings": ["string_ensemble"],
-    "violin": ["violin"],
-    "cello": ["cello"],
-    "brass": ["brass_section", "trumpet", "trombone", "tuba", "french_horn"],
-    "trumpet": ["trumpet"],
-    "saxophone": ["soprano_and_alto_sax", "tenor_sax", "baritone_sax"],
-    "flute": ["flutes"],
-    "organ": ["organ"],
-    "synth_lead": ["synth_lead"],
-    "synth_pad": ["synth_pad"],
-    "vocals": ["voice"],
+    "acoustic_piano","electric_piano","chromatic_percussion","organ",
+    "acoustic_guitar","clean_electric_guitar","distorted_electric_guitar",
+    "acoustic_bass","electric_bass","violin","viola","cello","contrabass",
+    "orchestral_harp","timpani","string_ensemble","synth_strings","voice",
+    "orchestra_hit","trumpet","trombone","tuba","french_horn","brass_section",
+    "soprano_and_alto_sax","tenor_sax","baritone_sax","oboe","english_horn",
+    "bassoon","clarinet","flutes","synth_lead","synth_pad","drums",
 }
 
 class MuscriptorEngine(TranscriptionEngine):
-    """Call MuScriptor through its official CLI (subprocess mode).
-
-    Pros: no dependency on the internal Python API; the process exits
-    cleanly with no lingering memory leaks.
-    Cost: a cold model load on every run (~10-20s). Could later be
-    switched to an in-process resident engine.
-    """
-
     def __init__(self):
-        c = CFG.get("muscriptor", {})
-        self.model = c.get("model", "large")
-        # Compat with the old config key torch_backend (that was a uv
-        # install parameter, not a muscriptor option): map it to the
-        # CLI's real --device option (auto/cpu/cuda/cuda:0/mps).
-        self.device = c.get("device") or c.get("torch_backend") or ""
-        self.timeout = c.get("timeout", 1800)
-
-    def _cli_prefix(self) -> list[str] | None:
-        if shutil.which("muscriptor"):
-            return ["muscriptor"]
+        c = CFG.get("muscriptor", {}) or {}
+        self.model = c.get("model", "medium")
+        self.device = c.get("device") or "cuda"
         try:
-            import muscriptor  # noqa: F401
-            return [sys.executable, "-m", "muscriptor"]
-        except ImportError:
-            return None
+            self.beat_scale = float(c.get("beat_scale", 1.0))
+        except (TypeError, ValueError):
+            self.beat_scale = 1.0
+        self.dtype = c.get("dtype") or None
+        try:
+            self.timeout = int(c.get("timeout", 1800))
+        except (TypeError, ValueError):
+            self.timeout = 1800
+        self._cli = None
 
-    def is_available(self) -> bool:
+    def _cli_prefix(self):
+        if self._cli is not None: return self._cli
+        if shutil.which("muscriptor"):
+            self._cli = ["muscriptor"]
+        else:
+            try:
+                import muscriptor
+                self._cli = [sys.executable, "-m", "muscriptor"]
+            except ImportError:
+                self._cli = None
+        return self._cli
+
+    def is_available(self):
         return self._cli_prefix() is not None
 
-    def _translate_instruments(self, instruments: list[str] | None) -> str | None:
-        """Translate UI instrument names to CLI group names.
-
-        Unknown names are dropped, otherwise the whole --instruments
-        argument would be rejected by the CLI.
-        """
-        if not instruments:
-            return None
-        out: list[str] = []
-        for name in instruments:
-            key = str(name).strip().lower()
-            if key in _INSTRUMENT_MAP:
-                out += _INSTRUMENT_MAP[key]
-            elif key in _MUSCRIPTOR_INSTRUMENTS:
-                out.append(key)
-        out = list(dict.fromkeys(out))  # dedupe, keep order
-        return ",".join(out) if out else None
-
-    def _build_cmd(self, audio: str, out: str,
-                   instruments: list[str] | None, bpm: int | None) -> list[str]:
+    def _build_cmd(self, audio, out, instruments, bpm, force_gpu=None):
         cmd = list(self._cli_prefix())
-        # Fix 1: add the required `transcribe` subcommand (previously the
-        # audio path was treated as the subcommand) + skip beat detection
-        # (--detect-tempo false; parameter verified against --help).
-        cmd += ["transcribe", audio, "-o", out, "--model", str(self.model), "--detect-tempo", "false"]
-        # Fix 2: --torch-backend does not exist in the CLI; use the real
-        # option --device instead.
-        if self.device:
-            cmd += ["--device", self.device]
-        # Fix 3: translate instrument names to CLI-recognized groups first.
-        inst = self._translate_instruments(instruments)
-        if inst:
-            cmd += ["--instruments", inst]
+        cmd += ["transcribe", audio, "-o", out, "--model", str(self.model),
+                "--detect-tempo", "best-effort"]
+        if force_gpu is True:   cmd += ["--device", "cuda"]
+        elif force_gpu is False: cmd += ["--device", "cpu"]
+        else:                    cmd += ["--device", str(self.device)]
+        # 只透传官方名；不传 = 模型自检全部 36 类
+        if instruments:
+            ok = [i for i in instruments if str(i).strip().lower() in _MUSCRIPTOR_INSTRUMENTS]
+            if ok:
+                cmd += ["--instruments", ",".join(ok)]
         if bpm:
-            cmd += ["--bpm", str(int(bpm))]  # CLI limits 20-400
-        # Parameter names cross-checked against `muscriptor transcribe --help`
+            cmd += ["--bpm", str(int(bpm))]
+        if self.beat_scale and abs(self.beat_scale - 1.0) > 1e-6:
+            cmd += ["--beat-scale", str(self.beat_scale)]
+        if self.dtype:
+            cmd += ["--dtype", str(self.dtype)]
         return cmd
 
-    def transcribe(self, audio_path, out_mid_path, instruments=None, bpm=None):
-        cmd = self._build_cmd(audio_path, out_mid_path, instruments, bpm)
-        env = os.environ.copy()  # inherit HF_TOKEN etc.
+    def transcribe(self, audio_path, out_mid_path,
+                   instruments=None, bpm=None, force_gpu=None, timeout=None):
+        cmd = self._build_cmd(audio_path, out_mid_path, instruments, bpm, force_gpu)
+        try:
+            _tv = int(timeout) if timeout is not None else None
+        except (TypeError, ValueError):
+            _tv = None
+        if _tv is None:
+            t = self.timeout
+        elif _tv == 0:
+            t = None
+        elif _tv > 0:
+            t = _tv
+        else:
+            t = self.timeout
+        env = os.environ.copy()
         try:
             r = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=self.timeout, env=env,
+                               timeout=t, env=env,
                                encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"MuScriptor timeout ({self.timeout}s)")
+            raise RuntimeError("转写超时（" + str(t) + " 秒）。可在 config.yaml 调大 muscriptor.timeout，或 UI 里把超时设为 0（无限制）后重试")
         if r.returncode != 0:
-            raise RuntimeError(
-                f"MuScriptor failed (code {r.returncode}):\n"
-                f"{(r.stderr or r.stdout)[-2000:]}")
+            raise RuntimeError("MuScriptor failed (code " + str(r.returncode) + "):\n"
+                               + ((r.stderr or r.stdout) or "")[-2000:])
         if not os.path.exists(out_mid_path):
             raise RuntimeError("MuScriptor produced no MIDI file")
         return out_mid_path

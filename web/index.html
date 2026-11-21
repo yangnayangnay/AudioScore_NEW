@@ -3,174 +3,383 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>midi-bridge · 音频转 MIDI</title>
+<title>AudioScore · 音频转 MIDI</title>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --txt:#e8eaf0;
-          --dim:#8b93a3; --acc:#5b8cff; --ok:#3ecf8e; --err:#ff6b6b; }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--bg); color:var(--txt); font-family:system-ui,
-         "PingFang SC","Microsoft YaHei",sans-serif; min-height:100vh; }
-  .wrap { max-width:720px; margin:0 auto; padding:24px 16px 60px; }
-  h1 { font-size:22px; margin-bottom:4px; }
-  .sub { color:var(--dim); font-size:13px; margin-bottom:24px; }
-  .card { background:var(--card); border:1px solid var(--line);
-          border-radius:12px; padding:20px; margin-bottom:16px; }
-  #drop { border:2px dashed var(--line); border-radius:10px; padding:36px 16px;
-          text-align:center; cursor:pointer; transition:.2s; }
-  #drop.on { border-color:var(--acc); background:#1c2230; }
-  #drop .big { font-size:15px; margin-bottom:6px; }
-  #drop .small { color:var(--dim); font-size:12px; }
-  label { display:block; font-size:13px; color:var(--dim); margin:14px 0 6px; }
-  select,input[type=number] { width:100%; background:#11141a; color:var(--txt);
-    border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:14px; }
-  .chips { display:flex; flex-wrap:wrap; gap:8px; }
-  .chip { border:1px solid var(--line); border-radius:999px; padding:5px 13px;
-          font-size:12px; cursor:pointer; user-select:none; color:var(--dim); }
-  .chip.on { border-color:var(--acc); color:var(--acc); background:#1c2536; }
-  .row { display:flex; gap:16px; flex-wrap:wrap; }
-  .row>div { flex:1; min-width:150px; }
-  .opt { display:flex; align-items:center; gap:8px; font-size:13px;
-         color:var(--txt); margin-top:10px; }
-  button.go { width:100%; margin-top:20px; padding:13px; font-size:15px;
-    border:none; border-radius:10px; background:var(--acc); color:#fff;
-    font-weight:600; cursor:pointer; }
-  button.go:disabled { opacity:.45; cursor:not-allowed; }
-  #status { display:none; }
-  .stage { font-size:14px; margin-bottom:8px; }
-  .bar { height:6px; background:#11141a; border-radius:3px; overflow:hidden; }
-  .bar i { display:block; height:100%; background:var(--acc); width:0%;
-           transition:width .5s; border-radius:3px; }
-  .meta { color:var(--dim); font-size:12px; margin-top:8px; }
-  .err { color:var(--err); font-size:13px; white-space:pre-wrap;
-         max-height:200px; overflow:auto; margin-top:8px; }
-  a.dl { display:block; text-align:center; margin-top:16px; padding:13px;
-    border-radius:10px; background:var(--ok); color:#06281a; font-weight:700;
-    text-decoration:none; font-size:15px; }
-  .hist { font-size:12px; color:var(--dim); margin-top:12px; line-height:1.9; }
-  .hist a { color:var(--acc); }
+:root{--bg:#0f1115;--card:#181b22;--line:#2a2f3a;--txt:#e8eaf0;--dim:#8b93a3;--acc:#5b8cff;--ok:#3ecf8e;--err:#ff6b6b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:system-ui,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh}
+.wrap{max-width:780px;margin:0 auto;padding:24px 16px 60px}
+h1{font-size:22px;margin-bottom:4px}
+h1 b{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-bottom:24px}
+#banner{display:none;background:#3a2328;border:1px solid var(--err);color:var(--err);padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:13px;white-space:pre-wrap}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:36px 16px;text-align:center;cursor:pointer;transition:.2s}
+#drop.on{border-color:var(--acc);background:#1c2230}
+#drop .big{font-size:15px;margin-bottom:6px}
+#drop .small{color:var(--dim);font-size:12px}
+label{display:block;font-size:13px;color:var(--dim);margin:14px 0 6px}
+select,input[type=number]{width:100%;background:#11141a;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:5px 13px;font-size:12px;cursor:pointer;user-select:none;color:var(--dim)}
+.chip.on{border-color:var(--acc);color:var(--acc);background:#1c2536}
+.row{display:flex;gap:16px;flex-wrap:wrap}
+.row>div{flex:1;min-width:150px}
+.opt{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);margin-top:10px;cursor:pointer}
+.opt input{width:auto}
+button.go{width:100%;margin-top:20px;padding:13px;font-size:15px;border:none;border-radius:10px;background:var(--acc);color:#fff;font-weight:600;cursor:pointer}
+button.go:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt);padding:8px 14px;border-radius:8px;font-size:13px;cursor:pointer;margin-top:10px}
+button.ghost:hover{border-color:var(--acc)}
+.filelist{list-style:none;margin-top:12px}
+.filelist li{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;font-size:13px;background:#11141a}
+.filelist li .nm{font-weight:500;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.filelist li .meta{color:var(--dim);font-size:12px;display:flex;justify-content:space-between;gap:8px}
+.filelist li .st{font-weight:600}
+.filelist li .st.q{color:var(--dim)}.filelist li .st.r{color:var(--acc)}.filelist li .st.d{color:var(--ok)}.filelist li .st.e{color:var(--err)}
+.filelist li .bar{height:4px;background:#0a0c10;border-radius:2px;overflow:hidden;margin-top:6px}
+.filelist li .bar i{display:block;height:100%;background:var(--acc);width:0%;transition:width .3s}
+.filelist li.done .bar i{background:var(--ok)}
+.filelist li a{color:var(--acc);text-decoration:none;font-weight:600}
+.empty{color:var(--dim);font-size:12px;text-align:center;padding:8px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>midi-bridge</h1>
-  <div class="sub">本地 AI 音频转 MIDI · MuScriptor / Basic Pitch · RTX 4070</div>
+  <h1><b>AudioScore</b> · 音频转 MIDI</h1>
+  <div class="sub">本地 AI 音频转 MIDI · MuScriptor / Basic Pitch · 批量队列 · GPU 加速 · 超时可控 · 输出 原名+AudioScore.midi</div>
+  <div id="banner"></div>
 
   <div class="card">
     <div id="drop">
-      <div class="big" id="fname">点击选择或拖入音频文件</div>
-      <div class="small" id="fmeta">支持 mp3 / wav / flac / ogg，≤200MB</div>
+      <div class="big">点击选择或拖入音频文件（可一次选多个）</div>
+      <div class="small">mp3 / wav / flac / ogg / m4a · 默认 ≤200MB（可勾选解除）· 自动串行入队</div>
     </div>
-    <input type="file" id="file" accept="audio/*" hidden>
+    <input id="file" type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a" multiple hidden>
+    <div id="listempty" class="empty">还没有文件，选完点下方按钮开始</div>
+    <ul id="list" class="filelist"></ul>
+    <button class="ghost" id="dlallbtn" style="display:none" onclick="downloadZip()">⬇ 打包下载 ZIP</button>
+    <button class="ghost" id="clearbtn" style="display:none" onclick="clearDone()">清掉已完成</button>
   </div>
 
   <div class="card">
     <label>转写后端</label>
     <select id="backend"></select>
-    <label>乐器约束（全不选 = 自动检测所有乐器；选中可抑制乐器识别漂移）</label>
-    <div class="chips" id="chips"></div>
+
+    <label>分轨模式（先 Demucs 分离音轨再逐轨转写，乐器分组更准；档位越高越慢）</label>
+    <select id="sep">
+      <option value="0">0 · 不分离（单模型，最快）</option>
+      <option value="1">1 · 分离鼓轨（约 2 倍耗时）</option>
+      <option value="2">2 · 分离鼓 + 贝斯（约 3 倍耗时）</option>
+      <option value="3">3 · 全分离：鼓/贝斯/人声/其他（约 4 倍耗时）</option>
+    </select>
+
+    <label>乐器约束（分轨模式下忽略；全不选 = 识别全部乐器）</label>
+    <div class="chips" id="instChips"></div>
+
     <div class="row">
       <div>
         <label>BPM（留空 = 自动检测）</label>
-        <input type="number" id="bpm" placeholder="auto" min="30" max="300">
+        <input id="bpm" type="number" min="30" max="300" placeholder="auto">
+      </div>
+      <div>
+        <label>单文件转写超时（分钟，0 = 无限制）</label>
+        <input id="tmo" type="number" min="0" max="1440" value="30">
       </div>
     </div>
-    <div class="opt"><input type="checkbox" id="pp1" checked>重叠分片去重（跨 5s 分片重复音符合并）</div>
-    <div class="opt"><input type="checkbox" id="pp2" checked>碎音符过滤（&lt;60ms）</div>
-    <div class="opt"><input type="checkbox" id="pp3">力度重建（基于原始音频能量）</div>
-    <button class="go" id="go" disabled>开始转写</button>
-  </div>
 
-  <div class="card" id="status">
-    <div class="stage" id="stage">排队中…</div>
-    <div class="bar"><i id="pbar"></i></div>
-    <div class="meta" id="smeta"></div>
-    <div class="err" id="serr"></div>
-    <a class="dl" id="dl" style="display:none" download>⬇ 下载 MIDI 文件</a>
-    <div class="hist" id="hist"></div>
+    <label class="opt"><input type="checkbox" id="autoInst"> 自动猜乐器（只猜鼓/贝斯/钢琴，猜错会漏其他乐器；混合编曲别开）</label>
+    <label class="opt"><input type="checkbox" id="autoDl" checked> 完成后自动下载（1 个直接下，多个自动打 ZIP）</label>
+    <label class="opt"><input type="checkbox" id="gpu" checked> GPU 加速（强制 --device cuda，关闭 = 自动）</label>
+    <label class="opt"><input type="checkbox" id="nosize"> 解除单文件 200MB 上限（超长音频用）</label>
+    <label class="opt"><input type="checkbox" id="nopost"> 跳过后处理（最快，但音符更原始）</label>
+    <label class="opt"><input type="checkbox" id="optDedup" checked> 重叠分片去重（跨 5s 分片重复音符合并）</label>
+    <label class="opt"><input type="checkbox" id="optShort" checked> 碎音符过滤（&lt;60ms）</label>
+    <label class="opt"><input type="checkbox" id="optVel" checked> 力度重建（基于原始音频能量）</label>
+
+    <button class="go" id="go">开始转换（入队）</button>
   </div>
 </div>
 
 <script>
-let file = null, poller = null, history = [];
-const $ = id => document.getElementById(id);
+const picked = new Set();
+const files = [];
+let polling = false;
+let pollFails = 0;
+const SUFFIX = "AudioScore.mid";
+const FALLBACK_INSTS = ["acoustic_piano","electric_piano","chromatic_percussion","organ","acoustic_guitar","clean_electric_guitar","distorted_electric_guitar","acoustic_bass","electric_bass","violin","viola","cello","contrabass","orchestral_harp","timpani","string_ensemble","synth_strings","voice","orchestra_hit","trumpet","trombone","tuba","french_horn","brass_section","soprano_and_alto_sax","tenor_sax","baritone_sax","oboe","english_horn","bassoon","clarinet","flutes","synth_lead","synth_pad","drums"];
 
-// 初始化后端与乐器
-fetch('/api/backends').then(r => r.json()).then(d => {
-  const sel = $('backend');
-  d.backends.forEach(b => {
-    const o = document.createElement('option');
-    o.value = b.name;
-    o.textContent = (b.available ? '' : '【未安装】') +
-      (b.name === 'muscriptor' ? 'MuScriptor（多乐器·推荐）' : 'Basic Pitch（单轨·轻量）');
-    o.disabled = !b.available;
-    sel.appendChild(o);
+const $ = s => document.querySelector(s);
+const listEl = $("#list"), emptyEl = $("#listempty"), banner = $("#banner");
+const drop = $("#drop");
+
+function showBanner(msg){ banner.textContent = msg; banner.style.display = "block"; }
+function hideBanner(){ banner.style.display = "none"; }
+
+async function fetchT(url, opts={}, ms=10000){
+  const ctrl = new AbortController();
+  const t = setTimeout(()=>ctrl.abort(), ms);
+  try { return await fetch(url, {...opts, signal: ctrl.signal}); }
+  finally { clearTimeout(t); }
+}
+
+function outName(fname){ return fname.replace(/\.[^.]+$/, "") + SUFFIX; }
+
+drop.onclick = () => $("#file").click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("on"); };
+drop.ondragleave = () => drop.classList.remove("on");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("on"); addFiles([...e.dataTransfer.files]); };
+$("#file").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
+
+const AUDIO_EXT = /\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i;
+function addFiles(fs){
+  for (const f of fs){
+    if (!AUDIO_EXT.test(f.name)) continue;
+    if (!$("#nosize").checked && f.size > 200*1024*1024){ alert(f.name + " 超过 200MB（可勾选解除上限）"); continue; }
+    if (files.some(x => x.file.name === f.name && x.file.size === f.size)) continue;
+    files.push({file:f, jobId:null, status:"ready", msg:"", detected:null});
+  }
+  renderList();
+}
+
+function renderList(){
+  listEl.innerHTML = "";
+  files.forEach((it,i)=>{
+    const li = document.createElement("li");
+    if (it.status==="done"||it.status==="cached") li.classList.add("done");
+    const nm = document.createElement("div"); nm.className="nm";
+    nm.textContent = (i+1)+". "+it.file.name;
+    const meta = document.createElement("div"); meta.className="meta";
+    const st = document.createElement("span"); st.className="st "+cls(it.status);
+    st.textContent = label(it);
+    const right = document.createElement("span");
+    if (it.status==="done"||it.status==="cached"){
+      const a=document.createElement("a");
+      a.href="/api/result/"+it.jobId;
+      a.download=outName(it.file.name);
+      a.textContent="下载 "+outName(it.file.name); right.appendChild(a);
+    } else if (it.status==="error"){
+      right.textContent=it.msg||""; right.style.color="var(--err)";
+    } else {
+      right.textContent=(it.file.size/1024/1024).toFixed(1)+" MB";
+    }
+    meta.appendChild(st); meta.appendChild(right);
+    const bar=document.createElement("div"); bar.className="bar";
+    const bi=document.createElement("i"); bar.appendChild(bi);
+    li.appendChild(nm); li.appendChild(meta); li.appendChild(bar);
+    if (it.msg && !["ready","uploading","error"].includes(it.status)){
+      const mv=document.createElement("div");
+      mv.style.cssText="color:#8b93a3;font-size:12px;margin-top:4px";
+      mv.textContent=it.msg; li.appendChild(mv);
+    }
+    if (it.detected && it.detected.length){
+      const dv=document.createElement("div");
+      dv.style.cssText="color:#8b93a3;font-size:12px;margin-top:4px";
+      dv.textContent="🎼 检测到: "+it.detected.join(", ");
+      li.appendChild(dv);
+    }
+    it.el=li; listEl.appendChild(li);
   });
-  const chips = $('chips');
-  d.instruments.forEach(name => {
-    const c = document.createElement('span');
-    c.className = 'chip'; c.textContent = name;
-    c.onclick = () => c.classList.toggle('on');
-    chips.appendChild(c);
+  emptyEl.style.display = files.length ? "none" : "";
+  $("#go").disabled = !files.some(x=>x.status==="ready") || polling;
+  const doneCount = files.filter(x=>x.status==="done"||x.status==="cached").length;
+  $("#dlallbtn").style.display = doneCount>=2 ? "" : "none";
+  $("#clearbtn").style.display = doneCount>0||files.some(x=>x.status==="error") ? "" : "none";
+}
+
+function label(it){
+  const m={ready:"待入队",uploading:"上传中…",queued:"排队中…",detecting:"预判乐器…",running:"转换中…",post:"后处理中…",done:"完成",cached:"缓存命中",error:"失败"};
+  return m[it.status]||it.status;
+}
+function cls(s){
+  const m={ready:"q",uploading:"r",queued:"q",detecting:"r",running:"r",post:"r",done:"d",cached:"d",error:"e"};
+  return m[s]||"q";
+}
+function prog(it){
+  const m={ready:0,uploading:5,queued:10,detecting:20,running:60,post:90,done:100,cached:100,error:0};
+  if (it.el) it.el.querySelector(".bar i").style.width=(m[it.status]||0)+"%";
+}
+
+function populateBackends(sel, backends){
+  sel.innerHTML="";
+  (backends||[]).forEach(b=>{
+    const o=document.createElement("option");
+    o.value=b.name; o.textContent=b.name+(b.available?"":"（不可用）");
+    o.disabled=!b.available; sel.appendChild(o);
+  });
+  let ok=[...sel.options].find(o=>!o.disabled);
+  if(!ok){
+    const o=document.createElement("option");
+    o.value="muscriptor"; o.textContent="muscriptor（兜底）";
+    sel.appendChild(o); ok=o;
+  }
+  sel.value = ok.value;
+}
+
+async function loadBackends(tries){
+  for(let i=0;i<(tries||3);i++){
+    try{
+      const r = await fetchT("/api/backends", {}, 8000);
+      const d = await r.json();
+      if(d.backend_error!==undefined) return d;
+      if((d.backends&&d.backends.length)||(d.instruments&&d.instruments.length)) return d;
+    }catch(e){}
+    await new Promise(r=>setTimeout(r,800));
+  }
+  return null;
+}
+
+loadBackends().then(d=>{
+  const sel=$("#backend");
+  if(d && d.backend_error){
+    showBanner("后端探测出错（不影响使用，已兜底）: "+d.backend_error);
+  }
+  if(!d){
+    showBanner("⚠ 无法获取后端列表（server 未启动或接口报错），已用内置兜底列表。可 F12 → Network 看 /api/backends 实际返回");
+    d = {backends:[{name:"muscriptor",available:true},{name:"basic-pitch",available:false}], instruments: FALLBACK_INSTS};
+  }
+  populateBackends(sel, d.backends||[]);
+  (d.instruments||[]).forEach(n=>{
+    const c=document.createElement("div"); c.className="chip"; c.textContent=n;
+    c.onclick=()=>{c.classList.toggle("on");c.classList.contains("on")?picked.add(n):picked.delete(n);};
+    $("#instChips").appendChild(c);
   });
 });
 
-// 上传交互
-const drop = $('drop'), fi = $('file');
-drop.onclick = () => fi.click();
-drop.ondragover = e => { e.preventDefault(); drop.classList.add('on'); };
-drop.ondragleave = () => drop.classList.remove('on');
-drop.ondrop = e => { e.preventDefault(); drop.classList.remove('on'); pick(e.dataTransfer.files[0]); };
-fi.onchange = () => pick(fi.files[0]);
-function pick(f) {
-  if (!f) return;
-  file = f;
-  $('fname').textContent = f.name;
-  $('fmeta').textContent = (f.size / 1048576).toFixed(1) + ' MB';
-  $('go').disabled = false;
-}
+$("#go").onclick = async ()=>{
+  const ready = files.filter(x=>x.status==="ready");
+  if (!ready.length) return;
+  polling = true; $("#go").disabled = true;
+  ready.forEach(x=>{x.status="uploading";});
+  renderList(); ready.forEach(prog);
 
-// 提交
-$('go').onclick = async () => {
-  if (!file) return;
   const fd = new FormData();
-  fd.append('file', file);
-  fd.append('backend', $('backend').value);
-  fd.append('instruments', [...document.querySelectorAll('.chip.on')]
-            .map(c => c.textContent).join(','));
-  const bpm = $('bpm').value.trim();
-  if (bpm) fd.append('bpm', bpm);
-  // 后处理开关同步到说明: 服务端读 config.yaml; 这里至少写进缓存 key 的提示由后端处理
-  const r = await fetch('/api/jobs', { method: 'POST', body: fd });
-  const d = await r.json();
-  if (!r.ok) { alert(d.detail || '提交失败'); return; }
-  $('status').style.display = 'block';
-  $('dl').style.display = 'none'; $('serr').textContent = '';
-  poll(d.job_id);
+  ready.forEach(x=>fd.append("files", x.file, x.file.name));
+  fd.append("backend", $("#backend").value || "muscriptor");
+  fd.append("separate", $("#sep").value || "0");
+  fd.append("instruments", [...picked].join(","));
+  if ($("#bpm").value) fd.append("bpm", $("#bpm").value);
+  const tmRaw = parseInt($("#tmo").value);
+  fd.append("timeout_min", String(isNaN(tmRaw)?30:Math.max(0,Math.min(1440,tmRaw))));
+  fd.append("force_gpu", $("#gpu").checked ? "1" : "0");
+  fd.append("skip_post", $("#nopost").checked ? "1" : "0");
+  fd.append("auto_inst", ($("#autoInst").checked && picked.size===0) ? "1" : "0");
+  fd.append("no_size_limit", $("#nosize").checked ? "1" : "0");
+  fd.append("opt_dedup", $("#optDedup").checked ? "1" : "0");
+  fd.append("opt_short", $("#optShort").checked ? "1" : "0");
+  fd.append("opt_vel",   $("#optVel").checked   ? "1" : "0");
+
+  try{
+    const r = await fetchT("/api/batch", {method:"POST", body:fd}, 300000);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ("HTTP "+r.status));
+    const byName = {};
+    (d.submitted||[]).forEach(s=>{byName[s.file]=s;});
+    ready.forEach(x=>{
+      const s = byName[x.file.name];
+      if (s && s.job_id){ x.jobId=s.job_id; x.status="queued"; }
+      else { x.status="error"; x.msg=(s&&s.error)||"submit failed"; }
+    });
+  }catch(e){
+    const m = String(e.message||e);
+    const msg = /abort/i.test(m) ? "上传超时（5 分钟），文件太大或网络卡" : m;
+    ready.forEach(x=>{ if (x.status==="uploading"){x.status="error";x.msg=msg.slice(0,200);} });
+  }
+  polling = false;
+  renderList(); files.forEach(prog);
+  pollAll();
 };
 
-function poll(id) {
-  clearInterval(poller);
-  poller = setInterval(async () => {
-    const j = await (await fetch('/api/jobs/' + id)).json();
-    $('stage').textContent = '【' + j.backend + '】' + j.stage + (j.cached ? '（缓存命中）' : '');
-    $('pbar').style.width =
-      ({ queued: 5, running: 40, done: 100, error: 100 })[j.status] + '%';
-    $('smeta').textContent = '已用时 ' + j.elapsed + 's';
-    if (j.status === 'done') {
-      clearInterval(poller);
-      if (j.stats) $('smeta').textContent +=
-        ` · ${j.stats.notes} 音符 · ${j.stats.tracks} 轨 · ${j.stats.duration}s`;
-      const a = $('dl'); a.href = j.result_url;
-      a.style.display = 'block';
-      a.textContent = `⬇ 下载 MIDI（${j.stats.notes} 音符）`;
-      history.unshift(`<a href="${j.result_url}">${id}</a> · ${j.stats.notes}音符 · ${j.elapsed}s`);
-      $('hist').innerHTML = '本次会话: ' + history.slice(0, 5).join('｜');
-    } else if (j.status === 'error') {
-      clearInterval(poller);
-      $('serr').textContent = j.error || '未知错误';
-    }
-  }, 2000);
+function pollAll(){
+  const active = files.filter(x=>x.jobId && x.status!=="done" && x.status!=="cached" && x.status!=="error");
+  if (!active.length){ pollFails = 0; hideBanner(); maybeAutoDownload(); return; }
+  const ps = active.map(it =>
+    fetchT("/api/jobs/"+it.jobId, {}, 10000)
+      .then(r=>r.json())
+      .then(j=>{
+        if (j.status==="done"){
+          it.status=j.cached?"cached":"done";
+          if (j.detected) it.detected=j.detected;
+          it.msg=(j.stats? j.stats.notes+" 音符 · 时长 "+j.stats.duration+"s":"")
+                +(j.elapsed?(" · 耗时 "+j.elapsed+"s"
+                +((j.stats&&j.stats.duration>0)?"（"+(j.elapsed/j.stats.duration).toFixed(1)+"x 实时）":"")):"");
+        }
+        else if (j.status==="error"){ it.status="error"; it.msg=(j.error||"").slice(0,160); }
+        else if (j.stage==="separating"){ it.status="running"; it.msg="音轨分离中(Demucs)… 已用 "+(j.elapsed||0)+"s"; }
+        else if (/^stem /.test(j.stage||"")){ it.status="running"; it.msg=j.stage+" · 已用 "+(j.elapsed||0)+"s"; }
+        else if (j.stage==="instrument detect"){ it.status="detecting"; it.msg="已用 "+(j.elapsed||0)+"s"; }
+        else if (j.stage==="model running"){ it.status="running"; it.msg="已用 "+(j.elapsed||0)+"s"; }
+        else if (j.stage==="postprocess"){ it.status="post"; it.msg="已用 "+(j.elapsed||0)+"s"; }
+        else { it.status="queued"; }
+        prog(it); renderList();
+      })
+  );
+  Promise.allSettled(ps).then(results=>{
+    const allFailed = results.every(r=>r.status==="rejected");
+    if (allFailed) pollFails++; else pollFails = 0;
+    if (pollFails >= 5){
+      showBanner("⚠ 服务器无响应（连续 "+pollFails+" 次轮询失败）。任务可能仍在后台跑，刷新页面或重启 server 后可恢复查看");
+    } else hideBanner();
+    setTimeout(pollAll, 1200);
+  });
 }
+
+function triggerDownload(it){
+  const a=document.createElement("a");
+  a.href="/api/result/"+it.jobId;
+  a.download=outName(it.file.name);
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function downloadZip(){
+  const done = files.filter(x=>x.status==="done"||x.status==="cached");
+  if (!done.length) return;
+  const a=document.createElement("a");
+  a.href="/api/zip?ids="+done.map(x=>x.jobId).join(",");
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function maybeAutoDownload(){
+  if (!$("#autoDl").checked) return;
+  if (files.some(x=>x.status==="ready")) return;
+  const done = files.filter(x=>x.status==="done"||x.status==="cached");
+  if (!done.length) return;
+  if (done.length === 1){ triggerDownload(done[0]); }
+  else { downloadZip(); }
+}
+
+function clearDone(){
+  for (let i=files.length-1;i>=0;i--){
+    const s=files[i].status;
+    if (s==="done"||s==="cached"||s==="error") files.splice(i,1);
+  }
+  renderList();
+}
+
+$("#sep").onchange = () => {
+  const on = $("#sep").value === "0";
+  document.querySelectorAll("#instChips .chip").forEach(c => c.style.opacity = on ? "" : "0.4");
+  $("#autoInst").disabled = !on;
+};
+
+
+(function fillBackend() {
+  const sel = document.getElementById("backend");
+  if (!sel) return;
+  if (sel.options.length > 0) return;   // 已有选项则不重复填
+  const opts = [
+    ["muscriptor",  "MuScriptor（多乐器，推荐）"],
+    ["basic_pitch", "Basic Pitch（轻量快速）"],
+  ];
+  opts.forEach(([v, t]) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = t;
+    sel.appendChild(o);
+  });
+  sel.value = "muscriptor";  // 默认值与提交兜底一致
+})();
+
+renderList();
 </script>
 </body>
 </html>
